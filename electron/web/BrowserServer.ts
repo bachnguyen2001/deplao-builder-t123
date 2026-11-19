@@ -82,8 +82,10 @@ export async function startBrowserServer(options: BrowserServerOptions) {
     res.setHeader('Referrer-Policy', 'same-origin');
     res.setHeader('Cache-Control', 'no-store');
     // Reject DNS rebinding and cross-origin requests before reading cookies or bodies.
+    const publicOrigin = options.publicOrigin ? new URL(options.publicOrigin) : null;
+    const allowedHosts = new Set([authority, publicOrigin?.host].filter(Boolean));
     const allowedOrigins = new Set([`http://${authority}`, options.publicOrigin].filter(Boolean));
-    if (req.headers.host !== authority || (req.headers.origin && !allowedOrigins.has(req.headers.origin))) {
+    if (!allowedHosts.has(req.headers.host || '') || (req.headers.origin && !allowedOrigins.has(req.headers.origin))) {
       json(res, 403, { error: 'Nguồn truy cập không hợp lệ' });
       return;
     }

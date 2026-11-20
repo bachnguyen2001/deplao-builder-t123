@@ -20,10 +20,18 @@ printf '%s\n' "$CURRENT" > "$BACKUP_DIR/$STAMP.commit"
 
 # Secrets, profile, SQLite and media stay outside Git and are never overwritten.
 git reset --hard "$TARGET"
+git submodule update --init --recursive
 npm ci --legacy-peer-deps
 npm run rebuild:native
 npm run build:electron
 npm run build:web
+# Messenger login/E2EE bridges (Go). Without Go, skip: Zalo keeps working.
+export PATH="$PATH:/usr/local/go/bin"
+if command -v go >/dev/null 2>&1; then
+  npm run build:bridge-e2ee
+else
+  echo "WARN: go not found, skipping build:bridge-e2ee (Messenger login unavailable)" >&2
+fi
 
 sudo systemctl restart "$SERVICE"
 sleep 3

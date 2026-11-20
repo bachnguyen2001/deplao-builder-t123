@@ -67,16 +67,17 @@ Facebook E2EE cần npm run build:bridge-e2ee.
 
 ## Kiểm tra với P-123
 
-Trong .env của P-123:
+Trong .env của P-123 chỉ cần 3 biến (P-123 tự lấy nick bot qua GET /accounts):
 
     DEPLAO_BASE_URL=http://127.0.0.1:27800/api/v1
     DEPLAO_API_KEY=dpk_key_tao_trong_deplao
-    DEPLAO_DURABLE_DELIVERY=true
-    DEPLAO_ZALO_ACCOUNT_ID=account-test
     DEPLAO_WEBHOOK_SECRET=secret-cua-webhook
-    DEPLAO_INBOX_PATH=./data/deplao-inbox.db
 
-Tạo webhook event message.received tới:
+API key: quyền accounts:read, chat:read, chat:send; "Tài khoản được dùng" chỉ
+chọn nick bot. P-123 chạy trong Docker thì đặt DEPLAO_BASE_URL_DOCKER thay cho
+DEPLAO_BASE_URL.
+
+Tạo webhook (chỉ sự kiện message.received, chỉ nick bot) tới:
 
     http://127.0.0.1:8000/integrations/deplao/events
 
@@ -104,12 +105,29 @@ Chạy thủ công trên Linux:
 HTTP tại 127.0.0.1:27800. Proxy hoặc tunnel của bạn trỏ domain HTTPS vào port
 này; Nginx không phải yêu cầu. Proxy cần giữ SSE và hỗ trợ upload tối đa 64 MB.
 
+Đăng nhập Messenger cần hai chương trình Go trong src/bridge-e2ee/build/
+(fbchat-login-bridge, fbchat-bridge-e2ee). Cài Go trên VPS (go version chạy được
+với user deploy, thường ở /usr/local/go/bin). deploy/deploy-vps.sh tự chạy
+git submodule update --init --recursive và npm run build:bridge-e2ee; không có
+Go thì bỏ qua bước này (Zalo vẫn chạy, Messenger báo thiếu fbchat-login-bridge).
+
+Triển khai hiện tại của nhóm P-123 (cùng một VPS):
+
+    Deplao:          https://deplao-g123.duckdns.org   (API: /api/v1)
+    Porter web:      https://smart-ops.duckdns.org
+    Porter backend:  https://sc19-backend.duckdns.org
+
+Webhook message.received trỏ tới
+https://sc19-backend.duckdns.org/integrations/deplao/events. Trong .env của
+P-123 trên VPS: DEPLAO_BASE_URL_DOCKER=https://deplao-g123.duckdns.org/api/v1,
+DEPLAO_API_KEY và DEPLAO_WEBHOOK_SECRET.
+
 ## Quy trình operator
 
 1. Mở domain và đăng nhập bằng mật khẩu web.
 2. Thêm account và hoàn tất bước xác thực.
-3. Bật API, tạo key giới hạn đúng account.
-4. Tạo webhook message.received tới P-123 và lưu secret.
+3. Bật API, tạo key: quyền accounts:read, chat:read, chat:send; chỉ chọn nick bot.
+4. Tạo webhook message.received tới P-123 (/integrations/deplao/events) và lưu secret.
 5. Theo dõi webhook và delivery trong giao diện.
 
 Cookie web chỉ dùng cho operator. P-123 luôn dùng Authorization Bearer API key.

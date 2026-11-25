@@ -67,21 +67,27 @@ Facebook E2EE cần npm run build:bridge-e2ee.
 
 ## Kiểm tra với P-123
 
-Trong .env của P-123:
+P-123 tự quản kết nối: API key và secret webhook lưu mã hoá trong DB của P-123,
+P-123 tự tạo webhook của nó. Không chép key vào .env, không tạo webhook tay.
 
-    DEPLAO_BASE_URL=http://127.0.0.1:27800/api/v1
-    DEPLAO_API_KEY=dpk_key_tao_trong_deplao
-    DEPLAO_DURABLE_DELIVERY=true
-    DEPLAO_ZALO_ACCOUNT_ID=account-test
-    DEPLAO_WEBHOOK_SECRET=secret-cua-webhook
-    DEPLAO_INBOX_PATH=./data/deplao-inbox.db
+1. Tạo API key (thẻ API → API key → Tạo API key):
+   - Quyền: accounts:read, chat:read, chat:send, contacts:read, webhooks:manage.
+   - Tài khoản được dùng: Tất cả tài khoản. Deplao này chỉ chứa nick của P-123,
+     nick đăng nhập sau tự dùng được.
+2. .env của P-123 chỉ cần:
 
-Tạo webhook event message.received tới:
+       DEPLAO_BASE_URL=http://127.0.0.1:27800/api/v1
+       INTERNAL_API_TOKEN=chuoi-ngau-nhien
 
-    http://127.0.0.1:8000/integrations/deplao/events
+3. Gửi key cho P-123 (PUT /internal/deplao/connection, header X-Internal-Token,
+   body api_key + webhook_url). P-123 kiểm key, tạo webhook tên Porter
+   (message.received, group.event, group.updated, mọi nick) và dùng ngay.
 
-Nếu P-123 chạy trong Docker, WSL hoặc máy khác, dùng địa chỉ mà Deplao truy cập
-được; các môi trường không tự chia sẻ localhost.
+Hướng dẫn từng bước và lệnh mẫu: docs/setup_deplao_t123.md của repo P-123.
+
+Webhook URL phải là địa chỉ Deplao truy cập được. Nếu P-123 chạy trong Docker,
+WSL hoặc máy khác, localhost không tự chia sẻ; Deplao chặn URL nội bộ trừ khi
+bật api_allow_private_urls.
 
 ## Bổ sung khi chạy trên VPS
 
@@ -108,9 +114,12 @@ này; Nginx không phải yêu cầu. Proxy cần giữ SSE và hỗ trợ uploa
 
 1. Mở domain và đăng nhập bằng mật khẩu web.
 2. Thêm account và hoàn tất bước xác thực.
-3. Bật API, tạo key giới hạn đúng account.
-4. Tạo webhook message.received tới P-123 và lưu secret.
-5. Theo dõi webhook và delivery trong giao diện.
+3. Bật API, tạo key cho P-123 như mục "Kiểm tra với P-123" và gửi key cho P-123.
+4. Theo dõi webhook Porter và delivery trong giao diện.
+5. Đổi quyền hoặc tài khoản của key: bấm Sửa ở key, key giữ nguyên nên P-123
+   không phải đổi gì. Sửa webhook (tên, URL, sự kiện, tài khoản): bấm Sửa ở
+   webhook, secret giữ nguyên. Webhook Porter do P-123 quản, P-123 tự đặt lại
+   sự kiện khi khởi động.
 
 Cookie web chỉ dùng cho operator. P-123 luôn dùng Authorization Bearer API key.
 
@@ -118,10 +127,14 @@ Cookie web chỉ dùng cho operator. P-123 luôn dùng Authorization Bearer API 
 
 Base URL là https://channels.example.com/api/v1.
 
-- GET /accounts: danh sách account và trạng thái.
-- POST /deliveries: ghi lệnh gửi vào hàng đợi.
-- GET /deliveries: xem delivery của API key.
-- GET /deliveries/{outbound_id}: tra một delivery.
+- GET /accounts (accounts:read): danh sách account và trạng thái.
+- POST /deliveries (chat:send): ghi lệnh gửi vào hàng đợi.
+- GET /deliveries, GET /deliveries/{outbound_id} (chat:send): tra delivery.
+- GET /accounts/{id}/groups/{gid}, .../members (chat:read): thông tin và thành
+  viên nhóm.
+- GET /accounts/{id}/users/{uid}, /accounts/{id}/users/lookup?phone=
+  (contacts:read): hồ sơ người dùng, tra theo số điện thoại.
+- GET/POST/PATCH/DELETE /webhooks (webhooks:manage): P-123 tự quản webhook.
 - GET /docs: tài liệu API.
 
 Body gửi gồm outbound_id, account_id, conversation_id, text và thread_type.

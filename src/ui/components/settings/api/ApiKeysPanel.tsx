@@ -58,6 +58,7 @@ export default function ApiKeysPanel({ scopes, presets }: Props) {
   const [error, setError] = useState<string | null>(null);
   const [includeRevoked, setIncludeRevoked] = useState(false);
   const [creating, setCreating] = useState(false);
+  const [editing, setEditing] = useState<ApiKeyRecord | null>(null);
   const [created, setCreated] = useState<{ name: string; key: string } | null>(null);
   const [usage, setUsage] = useState<Record<string, string>>({});
 
@@ -119,7 +120,21 @@ export default function ApiKeysPanel({ scopes, presets }: Props) {
         <OneTimeSecret title={tr('API key "{{name}}"', { name: created.name })} value={created.key} onDone={() => setCreated(null)} />
       )}
 
-      {creating ? (
+      {editing ? (
+        <KeyForm
+          key={editing.id}
+          scopes={scopes}
+          presets={presets}
+          accounts={accounts}
+          editing={editing}
+          onCancel={() => setEditing(null)}
+          onCreated={() => {}}
+          onSaved={() => {
+            setEditing(null);
+            load();
+          }}
+        />
+      ) : creating ? (
         <KeyForm
           scopes={scopes}
           presets={presets}
@@ -146,16 +161,25 @@ export default function ApiKeysPanel({ scopes, presets }: Props) {
       {loading ? (
         <div className="flex justify-center py-8"><Spinner /></div>
       ) : (
-        <KeysTable keys={keys} accounts={accounts} usage={usage} onRevoke={revoke} onPurge={purge} onUsage={loadUsage} />
+        <KeysTable
+          keys={keys}
+          accounts={accounts}
+          usage={usage}
+          onEdit={k => { setCreating(false); setEditing(k); }}
+          onRevoke={revoke}
+          onPurge={purge}
+          onUsage={loadUsage}
+        />
       )}
     </div>
   );
 }
 
-export function KeysTable({ keys, accounts, usage, onRevoke, onPurge, onUsage }: {
+export function KeysTable({ keys, accounts, usage, onEdit, onRevoke, onPurge, onUsage }: {
   keys: ApiKeyRecord[];
   accounts: AccountOption[];
   usage: Record<string, string>;
+  onEdit: (k: ApiKeyRecord) => void;
   onRevoke: (k: ApiKeyRecord) => void;
   onPurge: (k: ApiKeyRecord) => void;
   onUsage: (k: ApiKeyRecord) => void;
@@ -201,6 +225,7 @@ export function KeysTable({ keys, accounts, usage, onRevoke, onPurge, onUsage }:
             </div>
             <div className="flex gap-3 justify-end">
               <button type="button" className={btn.link} onClick={() => onUsage(k)}>{tr('Thống kê 24h')}</button>
+              {active && <button type="button" className={btn.link} onClick={() => onEdit(k)}>{tr('Sửa')}</button>}
               {active && <button type="button" className="text-xs text-destructive hover:text-destructive/80" onClick={() => onRevoke(k)}>{tr('Thu hồi')}</button>}
               {!active && <button type="button" className="text-xs text-destructive hover:text-destructive/80" onClick={() => onPurge(k)}>{tr('Xoá hẳn')}</button>}
             </div>
@@ -211,22 +236,25 @@ export function KeysTable({ keys, accounts, usage, onRevoke, onPurge, onUsage }:
   );
 }
 
-export function KeyForm({ scopes, presets, accounts, onCancel, onCreated }: {
+export function KeyForm({ scopes, presets, accounts, onCancel, onCreated, editing, onSaved }: {
   scopes: ApiScopeInfo[];
   presets: Record<string, ApiScopePreset>;
   accounts: AccountOption[];
   onCancel: () => void;
   onCreated: (name: string, key: string) => void;
+  /** Có = sửa key này (giữ nguyên key, không đổi hạn). */
+  editing?: ApiKeyRecord;
+  onSaved?: () => void;
 }) {
   const showNotification = useAppStore(s => s.showNotification);
-  const [name, setName] = useState('');
-  const [selected, setSelected] = useState<Set<string>>(() => new Set(presets.chatbot?.scopes || []));
-  const [accountIds, setAccountIds] = useState<string[] | null>(null);
-  const [ips, setIps] = useState('');
-  const [rate, setRate] = useState('0');
-  const [erpRole, setErpRole] = useState<ApiKeyRecord['erp_role']>('member');
+  const [name, setName] = useState(editing?.name ?? '');
+  const [selected, setSelected] = useState<Set<string>>(() => new Set(editing ? editing.scopes : presets.chatbot?.scopes || []));
+  const [accountIds, setAccountIds] = useState<string[] | null>(editing ? editing.account_ids : null);
+  const [ips, setIps] = useState((editing?.allowed_ips || []).join('\n'));
+  const [rate, setRate] = useState(String(editing?.rate_limit_per_min || 0));
+  const [erpRole, setErpRole] = useState<ApiKeyRecord['erp_role']>(editing?.erp_role ?? 'member');
   const [expiryDays, setExpiryDays] = useState(0);
-  const [note, setNote] = useState('');
+  const [note, setNote] = useState(editing?.note || '');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -265,6 +293,23 @@ export function KeyForm({ scopes, presets, accounts, onCancel, onCreated }: {
     };
     setSaving(true);
     setError(null);
+    if (editing) {
+      try {
+        const { expiresAt: _keep, ...patch } = input;  // sửa không đổi hạn
+        const res = await ipc.api!.updateKey(editing.id, patch);
+        if (res.success) {
+          showNotification(tr('Đã lưu key'), 'success');
+          onSaved?.();
+        } else {
+          setError(res.error || tr('Lưu key thất bại'));
+        }
+      } catch (e: any) {
+        setError(e?.message || String(e));
+      } finally {
+        setSaving(false);
+      }
+      return;
+    }
     try {
       const res = await ipc.api!.createKey(input);
       if (res.success && res.key) {
@@ -281,7 +326,10 @@ export function KeyForm({ scopes, presets, accounts, onCancel, onCreated }: {
   };
 
   return (
-    <Section title={tr('Tạo API key')} icon={<KeyIcon className="w-4 h-4" />}>
+    <Section title={editing ? tr('Sửa API key') : tr('Tạo API key')} icon={<KeyIcon className="w-4 h-4" />}>
+      {editing && (
+        <p className="text-[11px] text-muted-foreground">{tr('Thay đổi có hiệu lực ngay. Key giữ nguyên, hệ thống đang dùng key không cần đổi gì.')}</p>
+      )}
       <Field label={tr('Tên')}>
         <input className={inputCls} value={name} maxLength={100} placeholder={tr('Website bán hàng')} onChange={e => setName(e.target.value)} />
       </Field>
@@ -335,11 +383,13 @@ export function KeyForm({ scopes, presets, accounts, onCancel, onCreated }: {
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-        <Field label={tr('Hết hạn')}>
-          <select className={inputCls} value={expiryDays} onChange={e => setExpiryDays(Number(e.target.value))}>
-            {EXPIRY_OPTIONS.map(o => <option key={o.days} value={o.days}>{o.label}</option>)}
-          </select>
-        </Field>
+        {!editing && (
+          <Field label={tr('Hết hạn')}>
+            <select className={inputCls} value={expiryDays} onChange={e => setExpiryDays(Number(e.target.value))}>
+              {EXPIRY_OPTIONS.map(o => <option key={o.days} value={o.days}>{o.label}</option>)}
+            </select>
+          </Field>
+        )}
         <Field label={tr('Ghi chú')}>
           <input className={inputCls} value={note} maxLength={500} placeholder={tr('Ai dùng, để làm gì')} onChange={e => setNote(e.target.value)} />
         </Field>
@@ -348,7 +398,7 @@ export function KeyForm({ scopes, presets, accounts, onCancel, onCreated }: {
       <ErrorBox message={error} />
       <div className="flex justify-end gap-2">
         <button type="button" className={btn.secondary} onClick={onCancel} disabled={saving}>{tr('Huỷ')}</button>
-        <button type="button" className={btn.primary} onClick={submit} disabled={saving}>{saving ? <Spinner size={3} /> : tr('Tạo key')}</button>
+        <button type="button" className={btn.primary} onClick={submit} disabled={saving}>{saving ? <Spinner size={3} /> : editing ? tr('Lưu') : tr('Tạo key')}</button>
       </div>
     </Section>
   );

@@ -25,6 +25,7 @@ export default function ApiWebhooksPanel() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
+  const [editing, setEditing] = useState<ApiWebhookRecord | null>(null);
   const [created, setCreated] = useState<{ name: string; secret: string } | null>(null);
   const [openId, setOpenId] = useState<string | null>(null);
   const [testing, setTesting] = useState<string | null>(null);
@@ -91,7 +92,20 @@ export default function ApiWebhooksPanel() {
         <OneTimeSecret title={tr('Secret của webhook "{{name}}"', { name: created.name })} value={created.secret} onDone={() => setCreated(null)} />
       )}
 
-      {creating ? (
+      {editing ? (
+        <WebhookForm
+          key={editing.id}
+          types={types}
+          accounts={accounts}
+          editing={editing}
+          onCancel={() => setEditing(null)}
+          onCreated={() => {}}
+          onSaved={() => {
+            setEditing(null);
+            load();
+          }}
+        />
+      ) : creating ? (
         <WebhookForm
           types={types}
           accounts={accounts}
@@ -122,6 +136,7 @@ export default function ApiWebhooksPanel() {
           onToggleOpen={id => setOpenId(prev => (prev === id ? null : id))}
           onActive={setActive}
           onTest={test}
+          onEdit={h => { setCreating(false); setEditing(h); }}
           onRemove={remove}
         />
       )}
@@ -129,7 +144,7 @@ export default function ApiWebhooksPanel() {
   );
 }
 
-export function WebhookList({ hooks, openId, testing, testResult, onToggleOpen, onActive, onTest, onRemove }: {
+export function WebhookList({ hooks, openId, testing, testResult, onToggleOpen, onActive, onTest, onEdit, onRemove }: {
   hooks: ApiWebhookRecord[];
   openId: string | null;
   testing: string | null;
@@ -137,6 +152,7 @@ export function WebhookList({ hooks, openId, testing, testResult, onToggleOpen, 
   onToggleOpen: (id: string) => void;
   onActive: (h: ApiWebhookRecord, active: boolean) => void;
   onTest: (h: ApiWebhookRecord) => void;
+  onEdit: (h: ApiWebhookRecord) => void;
   onRemove: (h: ApiWebhookRecord) => void;
 }) {
   if (hooks.length === 0) {
@@ -171,6 +187,7 @@ export function WebhookList({ hooks, openId, testing, testResult, onToggleOpen, 
               {testing === h.id ? tr('Đang gửi…') : tr('Gửi thử')}
             </button>
             <button type="button" className={btn.link} onClick={() => onToggleOpen(h.id)}>{openId === h.id ? tr('Ẩn lịch sử') : tr('Lịch sử gửi')}</button>
+            <button type="button" className={btn.link} onClick={() => onEdit(h)}>{tr('Sửa')}</button>
             <button type="button" className="text-xs text-destructive hover:text-destructive/80" onClick={() => onRemove(h)}>{tr('Xoá')}</button>
           </div>
           {openId === h.id && <Deliveries webhookId={h.id} />}
@@ -255,17 +272,21 @@ export function DeliveryTable({ rows, onRetry }: { rows: ApiWebhookDelivery[]; o
   );
 }
 
-export function WebhookForm({ types, accounts, onCancel, onCreated }: {
+export function WebhookForm({ types, accounts, onCancel, onCreated, editing, onSaved }: {
   types: EventTypeInfo[];
   accounts: AccountOption[];
   onCancel: () => void;
   onCreated: (name: string, secret: string) => void;
+  /** Có = sửa webhook này (secret giữ nguyên). */
+  editing?: ApiWebhookRecord;
+  onSaved?: () => void;
 }) {
-  const [name, setName] = useState('');
-  const [url, setUrl] = useState('');
-  const [allEvents, setAllEvents] = useState(false);
-  const [events, setEvents] = useState<Set<string>>(() => new Set(['message.received']));
-  const [accountIds, setAccountIds] = useState<string[] | null>(null);
+  const showNotification = useAppStore(s => s.showNotification);
+  const [name, setName] = useState(editing?.name ?? '');
+  const [url, setUrl] = useState(editing?.url ?? '');
+  const [allEvents, setAllEvents] = useState(editing ? editing.events.includes('*') : false);
+  const [events, setEvents] = useState<Set<string>>(() => new Set(editing ? editing.events.filter(e => e !== '*') : ['message.received']));
+  const [accountIds, setAccountIds] = useState<string[] | null>(editing ? editing.account_ids : null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -284,13 +305,30 @@ export function WebhookForm({ types, accounts, onCancel, onCreated }: {
     if (accountIds !== null && accountIds.length === 0) { setError(tr('Chọn ít nhất một tài khoản hoặc để "Tất cả tài khoản".')); return; }
     setSaving(true);
     setError(null);
+    const input = {
+      name: name.trim(),
+      url: url.trim(),
+      events: allEvents ? ['*'] : Array.from(events),
+      accountIds,
+    };
+    if (editing) {
+      try {
+        const res = await ipc.api!.updateWebhook(editing.id, input);
+        if (res.success) {
+          showNotification(tr('Đã lưu webhook'), 'success');
+          onSaved?.();
+        } else {
+          setError(res.error || tr('Không lưu được webhook'));
+        }
+      } catch (e: any) {
+        setError(e?.message || String(e));
+      } finally {
+        setSaving(false);
+      }
+      return;
+    }
     try {
-      const res = await ipc.api!.createWebhook({
-        name: name.trim(),
-        url: url.trim(),
-        events: allEvents ? ['*'] : Array.from(events),
-        accountIds,
-      });
+      const res = await ipc.api!.createWebhook(input);
       if (res.success && res.secret) onCreated(name.trim() || url.trim(), res.secret);
       else setError(res.error || tr('Không tạo được webhook'));
     } catch (e: any) {
@@ -301,7 +339,8 @@ export function WebhookForm({ types, accounts, onCancel, onCreated }: {
   };
 
   return (
-    <Section title={tr('Thêm webhook')} icon={<WebhookIcon className="w-4 h-4" />}>
+    <Section title={editing ? tr('Sửa webhook') : tr('Thêm webhook')} icon={<WebhookIcon className="w-4 h-4" />}>
+      {editing && <p className="text-[11px] text-muted-foreground">{tr('Secret giữ nguyên.')}</p>}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
         <Field label={tr('Tên')}>
           <input className={inputCls} value={name} maxLength={100} placeholder={tr('n8n đơn hàng')} onChange={e => setName(e.target.value)} />
@@ -334,7 +373,7 @@ export function WebhookForm({ types, accounts, onCancel, onCreated }: {
       <ErrorBox message={error} />
       <div className="flex justify-end gap-2">
         <button type="button" className={btn.secondary} onClick={onCancel} disabled={saving}>{tr('Huỷ')}</button>
-        <button type="button" className={btn.primary} onClick={submit} disabled={saving}>{saving ? <Spinner size={3} /> : tr('Tạo webhook')}</button>
+        <button type="button" className={btn.primary} onClick={submit} disabled={saving}>{saving ? <Spinner size={3} /> : editing ? tr('Lưu') : tr('Tạo webhook')}</button>
       </div>
     </Section>
   );

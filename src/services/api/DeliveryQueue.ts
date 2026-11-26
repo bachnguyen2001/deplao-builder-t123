@@ -14,6 +14,14 @@ type Deps = {
  send(principal: Principal, payload: any): Promise<{status: number; payload: any}>;
 };
 
+/** Body của /deliveries → body của sendMessage (attachments trước, text sau — do sendMessage quyết định). */
+export function toSendBody(body: any): {text?: string; thread_type: string; attachments?: any[]} {
+  const out: {text?: string; thread_type: string; attachments?: any[]} = {thread_type: body.thread_type};
+  if (typeof body.text === 'string' && body.text.length) out.text = body.text;
+  if (Array.isArray(body.attachments) && body.attachments.length) out.attachments = body.attachments;
+  return out;
+}
+
 /** One worker per Electron process. Never blindly retry a possibly sent message. */
 export class DeliveryQueue {
  private timer?: ReturnType<typeof setInterval>;
@@ -37,6 +45,9 @@ export class DeliveryQueue {
    return {updated: true};
  }
  enqueue(p: Principal, body: any) {
+   const hasText = typeof body.text === 'string' && body.text.length > 0;
+   const hasFiles = Array.isArray(body.attachments) && body.attachments.length > 0;
+   if (!hasText && !hasFiles) throw new ApiError(400, 'VALIDATION_ERROR', 'text or attachments required');
    if (!accountAllowed(p, body.account_id)) throw new ApiError(403, 'FORBIDDEN_ACCOUNT', 'Account not allowed');
    const db = this.db(), owner = principalLogId(p), payload = JSON.stringify(body);
    return db.transaction(() => {
@@ -90,9 +101,13 @@ export class DeliveryQueue {
    return [
      route({
        method: 'POST', path: '/deliveries', operationId: 'enqueueDelivery', scope: 'chat:send', tags: ['Delivery'],
-       summary: 'Queue text durably; outbound_id is the persistent idempotency key',
+       summary: 'Queue text and/or uploaded files durably; outbound_id is the persistent idempotency key',
        body: s.object({ outbound_id: s.string().min(3).max(150), account_id: s.id(), conversation_id: s.id(),
-         text: s.string().min(1).max(5000), thread_type: s.enum(['user', 'group']).default('user') }),
+         text: s.string().min(1).max(5000).optional(),
+         attachments: s.array(s.object({ upload_id: s.string().min(1).max(200),
+           kind: s.enum(['image', 'video', 'audio', 'file'] as const).optional(),
+           caption: s.string().max(2000).optional() })).max(10).optional(),
+         thread_type: s.enum(['user', 'group']).default('user') }),
        handler: async ctx => { await ctx.account(ctx.body.account_id); return this.enqueue(ctx.principal, ctx.body); },
      }),
      route({ method: 'GET', path: '/deliveries', operationId: 'listDeliveries', scope: 'chat:read', tags: ['Delivery'],

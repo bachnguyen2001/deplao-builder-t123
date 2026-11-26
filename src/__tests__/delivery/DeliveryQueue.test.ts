@@ -1,4 +1,4 @@
-import { DeliveryQueue } from '../../services/api/DeliveryQueue';
+import { DeliveryQueue, toSendBody } from '../../services/api/DeliveryQueue';
 import { setApiDbProvider } from '../../services/api/dbSchema';
 import { systemPrincipal } from '../../services/api/ApiRouter';
 import { mkdtempSync, rmSync } from 'fs';
@@ -58,4 +58,25 @@ test('restart marks an interrupted send UNKNOWN', () => {
  sqlite.prepare("UPDATE channel_deliveries SET status='SENDING'").run();
  q.start(); q.stop();
  expect(q.list(principal)[0].status).toBe('UNKNOWN');
+});
+test('attachments are stored and passed to sendMessage', async () => {
+ const q = new DeliveryQueue(deps);
+ const bodyWithFile = {...body, attachments: [{upload_id: 'upl_1', kind: 'image'}]};
+ q.enqueue(principal, bodyWithFile); await q.tick();
+ expect(send).toHaveBeenCalledTimes(1);
+ expect((send.mock.calls[0] as any[])[1].attachments[0].upload_id).toBe('upl_1');
+ const row = sqlite.prepare('SELECT * FROM channel_deliveries').get();
+ expect(row.status).toBe('SENT');
+ const sb = toSendBody(JSON.parse(row.payload));
+ expect(sb.text).toBe('hello');
+ expect(sb.attachments).toHaveLength(1);
+});
+test('text or attachments required', () => {
+ const q = new DeliveryQueue(deps);
+ expect(() => q.enqueue(principal, {...body, text: undefined})).toThrow('text or attachments required');
+ expect(() => q.enqueue(principal, {...body, text: undefined, attachments: [{upload_id: 'u'}]})).not.toThrow();
+});
+test('toSendBody omits empty fields', () => {
+ expect(toSendBody({thread_type: 'user', text: 'x'})).toEqual({thread_type: 'user', text: 'x'});
+ expect(toSendBody({thread_type: 'group', attachments: []})).toEqual({thread_type: 'group'});
 });

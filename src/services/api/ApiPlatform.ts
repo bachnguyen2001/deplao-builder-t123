@@ -25,7 +25,7 @@ import { EventHub } from './events/EventHub';
 import { WebhookOutboundService } from './events/WebhookOutboundService';
 import { SocketGateway } from './events/SocketGateway';
 import type { Principal, RouteDef } from './types';
-import { DeliveryQueue } from './DeliveryQueue';
+import { DeliveryQueue, toSendBody } from './DeliveryQueue';
 
 type ExtraProvider = () => RouteDef[];
 type OnBeforeSend = (channel: string, cb: (data: any) => void) => () => void;
@@ -60,7 +60,7 @@ class ApiPlatform {
         online: async id => !!(await this.getAccounts().get(id).catch(() => null))?.online,
         send: (principal, body) => this.invoke('sendMessage', {
             principal, params: {accountId: body.account_id, threadId: body.conversation_id},
-            body: {text: body.text, thread_type: body.thread_type},
+            body: toSendBody(body),
         }),
     });
 

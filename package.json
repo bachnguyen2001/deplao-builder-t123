@@ -11,7 +11,7 @@
     "dev": "npm run build:electron && concurrently -n VITE,TSC,ELECTRON -c cyan,magenta,yellow \"vite\" \"tsc -p tsconfig.electron.json --watch --preserveWatchOutput\" \"wait-on http://localhost:27799 && cross-env NODE_ENV=development electron dist-electron/electron/bootstrap.js\"",
     "build:electron": "tsc -p tsconfig.electron.json",
     "build:renderer": "vite build",
-    "build:web": "vite build --config vite.web.config.ts",
+    "build:web": "cross-env NODE_ENV=production vite build --config vite.web.config.ts",
     "start:web": "cross-env NODE_ENV=production DEPLAO_WEB=1 electron dist-electron/electron/bootstrap.js",
     "web": "npm run build:electron && npm run build:web && npm run start:web",
     "test:web": "jest --runInBand --testPathPattern=web/",

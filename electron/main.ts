@@ -1082,7 +1082,7 @@ async function startupAllWorkspaces(): Promise<void> {
         if (connectedZaloIds.has(acc.zalo_id)) continue; // already connected
         try {
           const decryptedCookies = decryptCookiesForStartup(acc.cookies || '');
-          console.log(`[startupAllWorkspaces] ${acc.zalo_id}: raw prefix="${(acc.cookies || '').substring(0, 20)}" → decrypted prefix="${decryptedCookies.substring(0, 40)}" len=${decryptedCookies.length}`);
+          console.log(`[startupAllWorkspaces] ${acc.zalo_id}: connecting saved session (cookie length ${decryptedCookies.length})`);
           const connected = await loginService.connectUser({
             cookies: decryptedCookies,
             imei: acc.imei || '',

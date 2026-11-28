@@ -1,4 +1,4 @@
-name: Deploy Deplao web to VPS
+name: Build Deplao engine image on VPS
 
 on:
   workflow_dispatch:
@@ -27,6 +27,7 @@ jobs:
       - run: npm run rebuild:native
       - run: npm run test:web
       - run: npm run test:delivery
+      - run: npm run test:engine
       - run: npx tsc --noEmit
       - run: npm run build:electron
       - run: npm run build:web

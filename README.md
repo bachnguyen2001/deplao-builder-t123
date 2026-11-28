@@ -91,24 +91,40 @@ bật api_allow_private_urls.
 
 ## Bổ sung khi chạy trên VPS
 
-Clone repo tại /opt/deplao-builder-t123. VPS cần thêm Xvfb, git và user riêng,
-ví dụ deplao. Sau các bước cài đặt chung ở trên, đổi .env sang production:
+Trên VPS của P-123, Deplao là service `deplao` trong `docker-compose.production.yml` của P-123
+(container `sc19-p123-deplao-1`, profile `deplao`).
 
-    NODE_ENV=production
-    DEPLAO_WEB=1
-    DEPLAO_CHANNELS_ONLY=1
-    DEPLAO_WEB_PASSWORD=mat-khau-production-rieng
-    DEPLAO_WEB_PORT=27800
-    DEPLAO_WEB_ORIGIN=https://channels.example.com
-    DEPLAO_WEB_SECURE=1
+- Deplao không có địa chỉ công khai. Chỉ backend Porter gọi được, qua mạng nội bộ của compose:
+  Porter gọi `http://deplao:27800/api/v1`, Deplao gửi webhook tới `http://backend:8000/integrations/deplao/events`.
+- Deploy Porter không khởi động lại Deplao.
 
-Chạy thủ công trên Linux:
+Các thư mục trên VPS:
 
-    xvfb-run -a npm run start:web
+- mã nguồn, dùng để build image: `/opt/deplao-builder-t123`;
+- dữ liệu nick: `/opt/deplao-data` (bind vào `/root/.config/Deplao`);
+- mật khẩu web: `/home/bachngo3/.config/p123/deplao.env` (`DEPLAO_WEB_PASSWORD`, tối thiểu 12 ký tự). Các biến host, port, secure
+  do compose đặt.
 
-Để tự khởi động sau reboot, dùng deploy/deplao-web.service. Ứng dụng chỉ mở
-HTTP tại 127.0.0.1:27800. Proxy hoặc tunnel của bạn trỏ domain HTTPS vào port
-này; Nginx không phải yêu cầu. Proxy cần giữ SSE và hỗ trợ upload tối đa 64 MB.
+Nâng cấp gồm 2 bước:
+
+- merge `main` → workflow chỉ build image `deplao-engine:<sha>` (in ra ở cuối log);
+- sau đó vào P-123 → Actions → **Deploy Deplao engine** → nhập `image=deplao-engine:<sha>`. Image lỗi thì tự quay về image trước.
+
+Quay về một bản cũ:
+
+- chạy workflow P-123 với tag cũ;
+- nếu image đã bị dọn: `deploy/rollback-vps.sh /opt/deplao-builder-t123/.deploy-backups/<thời điểm>.commit` để build lại, rồi
+  chạy workflow.
+
+Vào giao diện (đăng nhập nick, tạo key, xem webhook):
+
+    ssh -L 27800:127.0.0.1:27800 <user>@<vps>
+    # rồi mở http://127.0.0.1:27800. Cổng local PHẢI là 27800 vì Deplao kiểm header Host
+
+Chuyển một lần từ systemd: theo P-123 `docs/setup_deplao_t123.md` §5.5 (`sudo systemctl stop deplao-web` →
+`sudo deploy/migrate-from-systemd.sh` → workflow Deploy Deplao engine → đổi kết nối Porter → gỡ domain).
+
+Chạy Deplao ngoài P-123 (cho dự án khác): dùng `docker-compose.headless.yml` như `HEADLESS_ENGINE_GUIDE.md` §3.
 
 ## Quy trình operator
 
@@ -146,8 +162,9 @@ lệnh; FAILED có thể retry; UNKNOWN cần đối chiếu trước khi gửi 
 CI chạy khi mở PR hoặc push main: cài dependency, rebuild native module, test,
 kiểm tra TypeScript và build web/Electron.
 
-CD chạy khi push main hoặc thủ công: SSH vào VPS, lấy đúng commit đã kiểm tra,
-build, giữ nguyên .env/profile/SQLite/media, restart deplao-web và health-check.
+CD chạy khi push `main` hoặc khi chạy tay. Workflow test trên runner GitHub, rồi SSH vào VPS chạy `deploy/deploy-vps.sh`: lấy đúng
+commit và `docker build` image `deplao-engine:<sha>`. **Workflow không chạy container.** Kích hoạt image bằng workflow
+"Deploy Deplao engine" của P-123. User SSH cần quyền `docker`.
 
 Tạo GitHub Environment production với:
 

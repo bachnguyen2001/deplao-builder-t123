@@ -8,3 +8,8 @@ build
 *.db
 *.sqlite
 *.stackdump
+.env
+.env.*
+!.env.example
+.deploy-backups
+deploy/tests/tmp

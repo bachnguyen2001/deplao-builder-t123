@@ -16,6 +16,7 @@ import { UploadStore } from './UploadStore';
 import { authenticateToken } from './auth/ApiAuth';
 import ApiKeyService from './auth/ApiKeyService';
 import { buildRoutes } from './routes';
+import { rehookQrSessions } from './routes/accounts';
 import { eventRoutes } from './routes/events';
 import { buildOpenApi } from './openapi/build';
 import { renderDocsPage } from './openapi/docsPage';
@@ -199,6 +200,7 @@ class ApiPlatform {
             this.hub?.hook();
             this.hub?.invalidateConsumers();
             this.accounts?.invalidate();
+            rehookQrSessions();
         } catch (err: any) {
             logger().error?.(`[ApiPlatform] rehookEvents: ${err?.message || err}`);
         }

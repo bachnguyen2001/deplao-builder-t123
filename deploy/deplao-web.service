@@ -1,3 +1,4 @@
+# LEGACY (before P-123 spec 018): systemd run of Deplao. Kept only to roll back; production runs as service "deplao" in P-123's docker-compose.production.yml.
 [Unit]
 Description=Deplao multi-channel web server
 After=network-online.target

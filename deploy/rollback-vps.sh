@@ -1,18 +1,30 @@
 #!/usr/bin/env bash
+# Rebuilds (if missing) the engine image of an older commit. Usage: rollback-vps.sh <BACKUP_DIR>/<timestamp>.commit
 set -Eeuo pipefail
 
 APP_DIR="${APP_DIR:-/opt/deplao-builder-t123}"
-SERVICE="${DEPLAO_SERVICE:-deplao-web}"
-COMMIT_FILE="${1:?Usage: rollback-vps.sh /opt/deplao-builder-t123/.deploy-backups/<timestamp>.commit}"
+BACKUP_DIR="${BACKUP_DIR:-$APP_DIR/.deploy-backups}"
+COMMIT_FILE="${1:?Usage: rollback-vps.sh <BACKUP_DIR>/<timestamp>.commit}"
+
+# Builds the image for COMMIT inside $APP_DIR; prints the tag as the last stdout line.
+build_image() {
+  local commit="$1"
+  local tag="deplao-engine:${commit:0:12}"
+  (cd "$APP_DIR" && docker build -f docker/headless.Dockerfile -t "$tag" . >&2)
+  printf '%s\n' "$tag"
+}
+
+COMMIT="$(cat "$COMMIT_FILE")"
+TAG="deplao-engine:${COMMIT:0:12}"
+
+if docker image inspect "$TAG" >/dev/null 2>&1; then
+  echo "Image $TAG còn trên máy"
+  printf 'Built %s. Activate it: P-123 → Actions → "Deploy Deplao engine" → image=%s\n' "$TAG" "$TAG"
+  exit 0
+fi
 
 cd "$APP_DIR"
-TARGET="$(cat "$COMMIT_FILE")"
-git cat-file -e "$TARGET^{commit}"
-git reset --hard "$TARGET"
-npm ci --legacy-peer-deps
-npm run rebuild:native
-npm run build:electron
-npm run build:web
-sudo systemctl restart "$SERVICE"
-sleep 3
-"$APP_DIR/deploy/healthcheck.sh"
+git cat-file -e "$COMMIT^{commit}"
+git reset --hard "$COMMIT"
+TAG="$(build_image "$COMMIT")"
+printf 'Built %s. Activate it: P-123 → Actions → "Deploy Deplao engine" → image=%s\n' "$TAG" "$TAG"

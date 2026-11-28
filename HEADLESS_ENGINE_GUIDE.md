@@ -113,3 +113,56 @@ Khi Deplao POST tới webhook:
    - Nếu `IsEnabled == false` → bỏ qua.
    - Nếu `AllowedThreadIds` có giá trị và `thread_id` không nằm trong danh sách → bỏ qua ngay (tránh bot tự trả lời tin nhắn cá nhân/nhóm ngoài luồng).
 4. Đưa nội dung vào AI Agent / Inbox của Tenant và gửi phản hồi qua `POST /api/v1/accounts/:accountId/conversations/:threadId/messages`.
+
+---
+
+## 5. Porter (P-123)
+
+### 5.1 Mô hình
+
+- Porter giữ **một key engine** ("Tất cả tài khoản") cho mọi đơn vị / tòa. Ban quản lý không thấy Deplao.
+- Cách ly nick giữa các tòa làm ở **Porter** (bảng nick ↔ tòa). Deplao giúp chiều tin vào: mỗi tòa một webhook có `account_ids` = nick chính của tòa.
+
+### 5.2 Tạo key engine (một lần)
+
+Một trong hai cách:
+
+- `curl -X POST http://<deplao>:27800/api/browser/provision-key -H "X-Deplao-Admin-Password: <mật khẩu web>" -H "Content-Type: application/json" -d '{"tenantSlug":"porter"}'`
+- hoặc UI Deplao → API → Tạo key, phạm vi **Tất cả tài khoản**.
+
+Scope bắt buộc (8): `accounts:read, accounts:manage, chat:read, chat:send, contacts:read, media:read, media:write, webhooks:manage`.
+Key này đặt vào `.env` của Porter là `DEPLAO_ENGINE_KEY` (spec 015). Lộ key = lộ mọi nick → thu hồi và tạo lại.
+
+### 5.3 API Porter gọi
+
+| Method + path | Dùng để |
+| :--- | :--- |
+| `GET /accounts` | Danh sách nick (thấy nick mới ngay sau khi quét QR) |
+| `POST /accounts/zalo/qr` | Bắt đầu đăng nhập Zalo bằng QR, trả `temp_id` |
+| `GET /accounts/zalo/qr/{temp_id}` | Trạng thái + ảnh QR |
+| `POST /accounts/zalo/qr/{temp_id}/abort` | Huỷ lượt QR |
+| `DELETE /accounts/{id}` | Gỡ nick Zalo (chỉ khi không còn tòa nào dùng) |
+| `POST/PATCH/DELETE /webhooks` | Mỗi tòa một webhook, `account_ids` = nick chính của tòa |
+| `/deliveries`, `/media`, `GET /accounts/{id}/users/…`, `…/groups/…` | Gửi tin, ảnh, danh bạ, nhóm (như trước) |
+
+### 5.4 Trạng thái QR
+
+`initializing` → `waiting` (có `qr_data_url`) → `scanned` → `success` (`account_id`, `account_name`) | `expired` | `declined` | `error`.
+Phiên nằm trong RAM, xoá sau 15 phút không có sự kiện; khởi động lại Deplao → `404`. Hook QR tự đăng ký lại sau khi đổi workspace.
+
+### 5.5 Lưu ý triển khai
+
+- Không mở cổng 27800 ra Internet khi `DEPLAO_WEB_SECURE=0`: mật khẩu web (cũng là mật khẩu tạo key) đi qua HTTP thường.
+- `DEPLAO_ALLOW_PRIVATE_URLS=1` tắt chặn webhook trỏ vào địa chỉ nội bộ cho **mọi** key — chỉ bật khi Porter gọi qua mạng Docker nội bộ.
+- `DELETE /accounts/{id}` xoá được nick bất kỳ với key "mọi nick": chỉ Porter giữ key này.
+
+### 5.6 Chạy trong compose của Porter trên VPS
+
+- Service `deplao` trong `docker-compose.production.yml` của P-123 (profile `deplao`, `pull_policy: never`). Chỉ mở `127.0.0.1:27800`.
+  Porter release (`scripts/deploy_release.sh`) không gọi tới service này. Chỉ `scripts/deploy_deplao.sh` (workflow
+  "Deploy Deplao engine") mới thay container.
+- Porter gọi `http://deplao:27800/api/v1`. Webhook của Porter: `http://backend:8000/integrations/deplao/events`. Cần
+  `DEPLAO_ALLOW_PRIVATE_URLS=1`; compose đặt biến này, Dockerfile không đặt.
+- Khi Deplao khởi động lại, mọi nick tự nối lại từ phiên đã lưu (`startupAllWorkspaces`), không cần quét QR. Tin tới trong lúc
+  đứt có thể không sang Porter, vì Deplao không tự lấy lại tin bị lỡ.
+- Dữ liệu nick ở `/opt/deplao-data`. Mất thư mục này thì mọi nick phải quét QR lại, nên cần sao lưu khi bảo trì.

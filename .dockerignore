@@ -1,6 +1,8 @@
 node_modules
 dist
 dist-electron
+# tsc incremental state: a host copy makes tsc skip emitting unchanged files
+tmp
 release
 build
 .git
@@ -8,3 +10,8 @@ build
 *.db
 *.sqlite
 *.stackdump
+.env
+.env.*
+!.env.example
+.deploy-backups
+deploy/tests/tmp

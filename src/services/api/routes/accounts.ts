@@ -40,32 +40,49 @@ interface QrSessionState {
 }
 
 const qrSessions = new Map<string, QrSessionState>();
-let qrHookRegistered = false;
+const QR_SESSION_TTL_MS = 15 * 60_000;
 
-function ensureQrHook() {
-    if (qrHookRegistered) return;
-    qrHookRegistered = true;
-    EventBroadcaster.onBeforeSend('qr:update', (data: any) => {
-        const tempId = String(data?.tempId || '');
-        if (!tempId) return;
-        const prev = qrSessions.get(tempId);
-        qrSessions.set(tempId, {
-            status: String(data?.status || prev?.status || 'waiting'),
-            qrDataUrl: data?.qrDataUrl ? String(data.qrDataUrl) : (prev?.qrDataUrl || ''),
-            message: data?.message ? String(data.message) : undefined,
-            accountId: data?.zaloId ? String(data.zaloId) : prev?.accountId,
-            accountName: data?.displayName ? String(data.displayName) : prev?.accountName,
-            updatedAt: Date.now(),
-        });
-        const cutoff = Date.now() - 15 * 60_000;
-        for (const [k, v] of qrSessions) {
-            if (v.updatedAt < cutoff) qrSessions.delete(k);
-        }
+/** Apply one `qr:update` payload to the session store. Pure (no I/O), returns the new status or null if ignored. */
+export function applyQrUpdate(sessions: Map<string, QrSessionState>, data: any, now: number): string | null {
+    const tempId = String(data?.tempId || '');
+    if (!tempId) return null;
+    const prev = sessions.get(tempId);
+    const status = String(data?.status || prev?.status || 'waiting');
+    sessions.set(tempId, {
+        status,
+        qrDataUrl: data?.qrDataUrl ? String(data.qrDataUrl) : (prev?.qrDataUrl || ''),
+        message: data?.message ? String(data.message) : undefined,
+        accountId: data?.zaloId ? String(data.zaloId) : prev?.accountId,
+        accountName: data?.displayName ? String(data.displayName) : prev?.accountName,
+        updatedAt: now,
     });
+    const cutoff = now - QR_SESSION_TTL_MS;
+    for (const [k, v] of sessions) {
+        if (v.updatedAt < cutoff) sessions.delete(k);
+    }
+    return status;
+}
+
+/** Named so EventBroadcaster.onBeforeSend dedupes it (same reference) and rehooking is idempotent. */
+function onQrUpdate(data: any): void {
+    if (applyQrUpdate(qrSessions, data, Date.now()) !== 'success') return;
+    try {
+        // Lazy require: ApiPlatform imports the routes, so a top-level import would be circular.
+        // eslint-disable-next-line @typescript-eslint/no-var-requires
+        require('../ApiPlatform').default.getInstance().invalidateAccounts();
+    } catch { /* the account list refreshes on its own after 3 s */ }
+}
+
+/**
+ * (Re)register the QR hook. Call at startup and after a workspace switch: clearBeforeSendHooks() removes every hook,
+ * and without this all QR sessions stay at 'initializing'. Safe to call any number of times.
+ */
+export function rehookQrSessions(): void {
+    EventBroadcaster.onBeforeSend('qr:update', onQrUpdate);
 }
 
 export function accountRoutes(): RouteDef[] {
-    ensureQrHook();
+    rehookQrSessions();
     return [
         route({
             method: 'GET', path: '/accounts', scope: 'accounts:read', tags: ['Tài khoản'], operationId: 'listAccounts',
@@ -190,7 +207,7 @@ export function accountRoutes(): RouteDef[] {
             summary: tr('Bắt đầu phiên đăng nhập Zalo bằng mã QR'),
             body: s.object({ proxy_id: s.int().nullable().optional() }).optional(),
             handler: async ctx => {
-                ensureQrHook();
+                rehookQrSessions();
                 const tempId = randomUUID();
                 qrSessions.set(tempId, { status: 'initializing', qrDataUrl: '', updatedAt: Date.now() });
                 const res = await ctx.call('login:qr', { tempId, proxyId: ctx.body?.proxy_id ?? null });

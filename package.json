@@ -16,6 +16,7 @@
     "web": "npm run build:electron && npm run build:web && npm run start:web",
     "test:web": "jest --runInBand --testPathPattern=web/",
     "test:delivery": "cross-env ELECTRON_RUN_AS_NODE=1 electron node_modules/jest/bin/jest.js --runInBand --testPathPattern=delivery/",
+    "test:engine": "cross-env ELECTRON_RUN_AS_NODE=1 electron node_modules/jest/bin/jest.js --runInBand --testPathPattern=engine/",
     "rebuild:native": "node scripts/rebuild-native.js",
     "production": "npm run build:bridge-e2ee && tsc -p tsconfig.electron.prod.json && node scripts/strip-console.js && npm run build:renderer && npm run rebuild:native && electron-builder --publish never"
   },

@@ -101,7 +101,8 @@ class ZaloLoginHelper {
         ZaloLoginHelper.activeQRAbortFns.set(tempId, () => { abortFn?.(); });
 
         const onQrEvent = (res: any) => {
-            console.log(`[ZaloLoginHelper] loginQR event type: ${res.type}`, JSON.stringify((res as any).data || {}).substring(0, 100));
+            // Only field names: data carries the QR token and, on success, the Zalo session cookies.
+            console.log(`[ZaloLoginHelper] loginQR event type: ${res.type}`, Object.keys((res as any).data || {}).join(','));
 
             if (res.type === LoginQRCallbackEventType.QRCodeGenerated) {
                 // Keep the abort function from actions

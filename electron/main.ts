@@ -20,8 +20,8 @@ const registerWorkflowIpc = CHANNELS_ONLY ? () => {} : require('./ipc/workflow/w
 const registerIntegrationIpc = CHANNELS_ONLY ? () => {} : require('./ipc/integrations/integrationIpc').registerIntegrationIpc;
 const registerAIAssistantIpc = CHANNELS_ONLY ? () => {} : require('./ipc/ai/aiAssistantIpc').registerAIAssistantIpc;
 import { registerUtilIpc } from './ipc/util/utilIpc';
-import { registerEmployeeIpc } from './ipc/employee/employeeIpc';
-import { registerRelayIpc } from './ipc/network/relayIpc';
+const registerEmployeeIpc = CHANNELS_ONLY ? () => {} : require('./ipc/employee/employeeIpc').registerEmployeeIpc;
+const registerRelayIpc = CHANNELS_ONLY ? () => {} : require('./ipc/network/relayIpc').registerRelayIpc;
 import { registerWorkspaceIpc } from './ipc/workspace/workspaceIpc';
 import { registerFacebookIpc, reconnectAllFBAccounts } from './ipc/facebook/facebookIpc';
 import { registerTelegramIpc } from './ipc/telegram/telegramIpc';
@@ -32,13 +32,13 @@ const registerErpCalendarIpc = CHANNELS_ONLY ? () => {} : require('./ipc/erp/erp
 const registerErpNoteIpc = CHANNELS_ONLY ? () => {} : require('./ipc/erp/erpNoteIpc').registerErpNoteIpc;
 const registerErpNotificationIpc = CHANNELS_ONLY ? () => {} : require('./ipc/erp/erpNotificationIpc').registerErpNotificationIpc;
 const registerErpHrmIpc = CHANNELS_ONLY ? () => {} : require('./ipc/erp/erpHrmIpc').registerErpHrmIpc;
-import { registerLockScreenIpc } from './ipc/security/lockScreenIpc';
-import { registerLibraryIpc } from './ipc/library/libraryIpc';
+const registerLockScreenIpc = CHANNELS_ONLY ? () => {} : require('./ipc/security/lockScreenIpc').registerLockScreenIpc;
+const registerLibraryIpc = CHANNELS_ONLY ? () => {} : require('./ipc/library/libraryIpc').registerLibraryIpc;
 import { registerMobileSyncIpc } from './ipc/zalo/mobileSyncIpc';
 import { registerApiIpc } from './ipc/api/apiIpc';
 const registerPluginIpc = CHANNELS_ONLY ? () => {} : require('./ipc/plugins/pluginIpc').registerPluginIpc;
 import { registerI18nIpc } from './ipc/i18n/i18nIpc';
-import { registerCloudflareIpc } from './ipc/cloud/cloudflareIpc';
+const registerCloudflareIpc = CHANNELS_ONLY ? () => {} : require('./ipc/cloud/cloudflareIpc').registerCloudflareIpc;
 import ApiPlatform from '../src/services/api/ApiPlatform';
 import WorkspaceManager from '../src/utils/app/WorkspaceManager';
 import HttpConnectionManager from '../src/services/http/HttpConnectionManager';

@@ -4,6 +4,7 @@ import { createReadStream } from 'fs';
 import { realpath, stat, readFile } from 'fs/promises';
 import * as path from 'path';
 import { operationsHtml } from './operations';
+import ApiKeyService from '../../src/services/api/auth/ApiKeyService';
 
 export interface BrowserServerOptions {
   password: string;
@@ -83,8 +84,9 @@ export async function startBrowserServer(options: BrowserServerOptions) {
     res.setHeader('Cache-Control', 'no-store');
     // Reject DNS rebinding and cross-origin requests before reading cookies or bodies.
     const publicOrigin = options.publicOrigin ? new URL(options.publicOrigin) : null;
-    const allowedHosts = new Set([authority, publicOrigin?.host].filter(Boolean));
-    const allowedOrigins = new Set([`http://${authority}`, options.publicOrigin].filter(Boolean));
+    const port = options.port || 27800;
+    const allowedHosts = new Set([authority, `deplao:${port}`, `localhost:${port}`, publicOrigin?.host].filter(Boolean));
+    const allowedOrigins = new Set([`http://${authority}`, `http://deplao:${port}`, `http://localhost:${port}`, options.publicOrigin].filter(Boolean));
     if (!allowedHosts.has(req.headers.host || '') || (req.headers.origin && !allowedOrigins.has(req.headers.origin))) {
       json(res, 403, { error: 'Nguồn truy cập không hợp lệ' });
       return;
@@ -93,6 +95,23 @@ export async function startBrowserServer(options: BrowserServerOptions) {
       const url = new URL(req.url || '/', `http://${authority}`);
       if (options.publicApi && (url.pathname.startsWith('/api/v1/') || url.pathname === '/docs' || url.pathname.startsWith('/docs/'))) {
         await options.publicApi(req, res);
+        return;
+      }
+      if (url.pathname === '/api/browser/provision-key' && req.method === 'POST') {
+        const adminPass = String(req.headers['x-deplao-admin-password'] || '');
+        if (!adminPass || !timingSafeEqual(passwordHash, createHash('sha256').update(adminPass).digest())) {
+          json(res, 401, { error: 'Unauthorized' });
+          return;
+        }
+        const raw = await body(req);
+        let tenantSlug = 'tenant';
+        try { tenantSlug = String(JSON.parse(raw || '{}').tenantSlug || 'tenant').slice(0, 60); } catch { }
+        const created = ApiKeyService.getInstance().create({
+          name: `Stayra-${tenantSlug}`,
+          scopes: ['accounts:read', 'accounts:manage', 'chat:read', 'chat:send', 'contacts:read', 'webhooks:manage'],
+          createdBy: 'stayra',
+        });
+        json(res, 200, { apiKey: created.key, keyId: created.record.id });
         return;
       }
       const token = req.headers.cookie?.split(';').map(v => v.trim()).find(v => v.startsWith(COOKIE + '='))?.slice(COOKIE.length + 1) || '';
@@ -125,14 +144,14 @@ export async function startBrowserServer(options: BrowserServerOptions) {
         json(res, 200, { success: true }); return;
       }
       if (url.pathname === '/operations' && req.method === 'GET') {
-        res.writeHead(200, {'Content-Type': 'text/html; charset=utf-8'}); res.end(operationsHtml); return;
+        res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' }); res.end(operationsHtml); return;
       }
       if (url.pathname === '/api/browser/deliveries' && req.method === 'GET' && options.deliveries) {
         json(res, 200, options.deliveries()); return;
       }
       if (url.pathname === '/api/browser/deliveries/retry' && req.method === 'POST' && options.retryDelivery) {
         const value = JSON.parse(await body(req));
-        if (typeof value.owner !== 'string' || typeof value.id !== 'string') { json(res, 400, {error: 'Invalid delivery'}); return; }
+        if (typeof value.owner !== 'string' || typeof value.id !== 'string') { json(res, 400, { error: 'Invalid delivery' }); return; }
         json(res, 200, options.retryDelivery(value.owner, value.id)); return;
       }
       if (url.pathname === '/api/browser/boot' && req.method === 'GET') {
@@ -186,7 +205,8 @@ export async function startBrowserServer(options: BrowserServerOptions) {
   await readFile(path.join(options.assets, 'index.html')); // Fail startup if the browser bundle was not built.
   await new Promise<void>((resolve, reject) => {
     server.once('error', reject);
-    server.listen(options.port ?? 27800, '127.0.0.1', () => { server.removeListener('error', reject); resolve(); });
+    const host = process.env.DEPLAO_WEB_HOST || '127.0.0.1';
+    server.listen(options.port ?? 27800, host, () => { server.removeListener('error', reject); resolve(); });
   });
   authority = `127.0.0.1:${(server.address() as import('net').AddressInfo).port}`;
   const heartbeat = setInterval(() => {

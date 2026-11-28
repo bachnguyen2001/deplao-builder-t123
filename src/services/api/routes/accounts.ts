@@ -4,6 +4,8 @@
  * fb:connect, fb:disconnect, fb:checkHealth, telegramUser:startListener, telegramUser:isConnected,
  * proxy:getForAccount, proxy:setAccount, proxy:list.
  */
+import { randomUUID } from 'node:crypto';
+import EventBroadcaster from '../../event/EventBroadcaster';
 import { s } from '../schema';
 import { ApiError, route, RouteDef } from '../types';
 import { accountAllowed } from '../auth/ApiAuth';
@@ -28,7 +30,42 @@ async function rawAccount(ctx: any, accountId: string): Promise<any> {
     return (res?.accounts || []).find((a: any) => String(a.zalo_id) === String(accountId)) || null;
 }
 
+interface QrSessionState {
+    status: string;
+    qrDataUrl: string;
+    message?: string;
+    accountId?: string;
+    accountName?: string;
+    updatedAt: number;
+}
+
+const qrSessions = new Map<string, QrSessionState>();
+let qrHookRegistered = false;
+
+function ensureQrHook() {
+    if (qrHookRegistered) return;
+    qrHookRegistered = true;
+    EventBroadcaster.onBeforeSend('qr:update', (data: any) => {
+        const tempId = String(data?.tempId || '');
+        if (!tempId) return;
+        const prev = qrSessions.get(tempId);
+        qrSessions.set(tempId, {
+            status: String(data?.status || prev?.status || 'waiting'),
+            qrDataUrl: data?.qrDataUrl ? String(data.qrDataUrl) : (prev?.qrDataUrl || ''),
+            message: data?.message ? String(data.message) : undefined,
+            accountId: data?.zaloId ? String(data.zaloId) : prev?.accountId,
+            accountName: data?.displayName ? String(data.displayName) : prev?.accountName,
+            updatedAt: Date.now(),
+        });
+        const cutoff = Date.now() - 15 * 60_000;
+        for (const [k, v] of qrSessions) {
+            if (v.updatedAt < cutoff) qrSessions.delete(k);
+        }
+    });
+}
+
 export function accountRoutes(): RouteDef[] {
+    ensureQrHook();
     return [
         route({
             method: 'GET', path: '/accounts', scope: 'accounts:read', tags: ['Tài khoản'], operationId: 'listAccounts',
@@ -146,6 +183,142 @@ export function accountRoutes(): RouteDef[] {
                 const res = await ctx.call('proxy:list');
                 const list = Array.isArray(res) ? res : (res?.proxies || res?.items || []);
                 return list.map(maskProxy);
+            },
+        }),
+        route({
+            method: 'POST', path: '/accounts/zalo/qr', scope: 'accounts:manage', tags: ['Tài khoản'], operationId: 'startZaloQrLogin',
+            summary: tr('Bắt đầu phiên đăng nhập Zalo bằng mã QR'),
+            body: s.object({ proxy_id: s.int().nullable().optional() }).optional(),
+            handler: async ctx => {
+                ensureQrHook();
+                const tempId = randomUUID();
+                qrSessions.set(tempId, { status: 'initializing', qrDataUrl: '', updatedAt: Date.now() });
+                const res = await ctx.call('login:qr', { tempId, proxyId: ctx.body?.proxy_id ?? null });
+                if (res && res.success === false) {
+                    throw new ApiError(500, 'QR_START_FAILED', res.error || tr('Không thể khởi tạo mã QR'));
+                }
+                return { temp_id: tempId };
+            },
+        }),
+        route({
+            method: 'GET', path: '/accounts/zalo/qr/:tempId', scope: 'accounts:read', tags: ['Tài khoản'], operationId: 'getZaloQrStatus',
+            summary: tr('Lấy mã QR và trạng thái phiên đăng nhập Zalo'),
+            params: s.object({ tempId: s.string() }),
+            handler: async ctx => {
+                const state = qrSessions.get(ctx.params.tempId);
+                if (!state) throw new ApiError(404, 'NOT_FOUND', tr('Không tìm thấy phiên QR'));
+                return {
+                    temp_id: ctx.params.tempId,
+                    status: state.status,
+                    qr_data_url: state.qrDataUrl,
+                    message: state.message ?? null,
+                    account_id: state.accountId ?? null,
+                    account_name: state.accountName ?? null,
+                };
+            },
+        }),
+        route({
+            method: 'POST', path: '/accounts/zalo/qr/:tempId/abort', scope: 'accounts:manage', tags: ['Tài khoản'], operationId: 'abortZaloQrLogin',
+            summary: tr('Hủy phiên đăng nhập Zalo bằng mã QR'),
+            params: s.object({ tempId: s.string() }),
+            handler: async ctx => {
+                await ctx.call('login:qr:abort', { tempId: ctx.params.tempId }).catch(() => {});
+                qrSessions.delete(ctx.params.tempId);
+                return { aborted: true };
+            },
+        }),
+        route({
+            method: 'DELETE', path: '/accounts/:accountId', scope: 'accounts:manage', tags: ['Tài khoản'], operationId: 'removeAccount',
+            summary: tr('Xóa tài khoản và phiên đăng nhập khỏi engine'),
+            params: accountParams,
+            handler: async ctx => {
+                const acc = await ctx.account(ctx.params.accountId);
+                if (acc.channel === CHANNELS.FACEBOOK) {
+                    await ctx.call('fb:removeAccount', { accountId: acc.id });
+                } else {
+                    await ctx.call('login:removeAccount', { zaloId: acc.id, deleteData: true });
+                }
+                return { removed: true, account_id: acc.id };
+            },
+        }),
+        route({
+            method: 'POST', path: '/accounts/facebook/login', scope: 'accounts:manage', tags: ['Tài khoản'], operationId: 'loginFacebookCredentials',
+            summary: tr('Đăng nhập Facebook Messenger bằng tài khoản/mật khẩu (hỗ trợ 2FA)'),
+            body: s.object({
+                username: s.string().min(1),
+                password: s.string().min(1),
+                two_fa_secret: s.string().optional(),
+            }),
+            handler: async ctx => {
+                const res = await ctx.call('fb:loginWithCredentials', {
+                    username: ctx.body.username,
+                    password: ctx.body.password,
+                    twoFASecret: ctx.body.two_fa_secret,
+                }, { timeoutMs: 120_000 });
+                if (!res?.success) {
+                    throw new ApiError(400, 'FB_LOGIN_FAILED', res?.error || res?.result?.error || tr('Đăng nhập Facebook thất bại'));
+                }
+                return { success: true, account: scrub(res.result || res) };
+            },
+        }),
+        route({
+            method: 'POST', path: '/accounts/telegram/send-code', scope: 'accounts:manage', tags: ['Tài khoản'], operationId: 'telegramSendCode',
+            summary: tr('Gửi mã OTP đăng nhập Telegram User'),
+            body: s.object({ phone_number: s.string().min(4) }),
+            handler: async ctx => {
+                const res = await ctx.ipc('telegramUser:sendCode', ctx.body.phone_number, { timeoutMs: 60_000 });
+                if (res && res.success === false) {
+                    throw new ApiError(400, 'TELEGRAM_SEND_CODE_FAILED', res.error || tr('Không gửi được mã OTP Telegram'));
+                }
+                return scrub(res);
+            },
+        }),
+        route({
+            method: 'POST', path: '/accounts/telegram/sign-in', scope: 'accounts:manage', tags: ['Tài khoản'], operationId: 'telegramSignIn',
+            summary: tr('Xác nhận mã OTP đăng nhập Telegram User'),
+            body: s.object({
+                phone_number: s.string().min(4),
+                code: s.string().min(1),
+                phone_code_hash: s.string().min(1),
+            }),
+            handler: async ctx => {
+                const res = await ctx.call('telegramUser:signIn', {
+                    phoneNumber: ctx.body.phone_number,
+                    code: ctx.body.code,
+                    phoneCodeHash: ctx.body.phone_code_hash,
+                }, { timeoutMs: 60_000 });
+                if (res && res.success === false && !res.needs2FA) {
+                    throw new ApiError(400, 'TELEGRAM_SIGN_IN_FAILED', res.error || tr('Đăng nhập Telegram thất bại'));
+                }
+                return scrub(res);
+            },
+        }),
+        route({
+            method: 'POST', path: '/accounts/telegram/sign-in-2fa', scope: 'accounts:manage', tags: ['Tài khoản'], operationId: 'telegramSignIn2FA',
+            summary: tr('Xác nhận mật khẩu 2FA khi đăng nhập Telegram User'),
+            body: s.object({ password: s.string().min(1) }),
+            handler: async ctx => {
+                const res = await ctx.ipc('telegramUser:signIn2FA', ctx.body.password, { timeoutMs: 60_000 });
+                if (res && res.success === false) {
+                    throw new ApiError(400, 'TELEGRAM_2FA_FAILED', res.error || tr('Mật khẩu 2FA Telegram không đúng'));
+                }
+                return scrub(res);
+            },
+        }),
+        route({
+            method: 'POST', path: '/accounts/telegram/bot', scope: 'accounts:manage', tags: ['Tài khoản'], operationId: 'telegramConnectBot',
+            summary: tr('Kết nối Telegram Bot bằng Bot Token'),
+            body: s.object({ bot_token: s.string().min(10) }),
+            handler: async ctx => {
+                const check = await ctx.ipc('telegram:validateBot', ctx.body.bot_token, { timeoutMs: 30_000 });
+                if (!check?.success || !check?.account) {
+                    throw new ApiError(400, 'TELEGRAM_BOT_INVALID', check?.error || tr('Bot Token không hợp lệ'));
+                }
+                const start = await ctx.call('telegram:startBot', check.account, { timeoutMs: 30_000 });
+                if (start && start.success === false) {
+                    throw new ApiError(409, 'TELEGRAM_BOT_CONFLICT', start.error || tr('Không thể khởi động Bot'));
+                }
+                return { success: true, account: scrub(check.account) };
             },
         }),
     ];
